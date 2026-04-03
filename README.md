@@ -1,26 +1,33 @@
-# sysmaint (Zsh) — System Maintenance Wrapper
+# sysmaint (Zsh) — Debian update client
 
-A small interactive **Zsh** wrapper to run common system maintenance tasks (APT / Flatpak / Snap) with **logging**, **progress UI**, a **snapshot menu option**, and a **smart skip** for upgrades when nothing is available.
+An interactive **Zsh** wrapper for common Debian/Kali maintenance tasks (APT / Flatpak / Snap) with a clean terminal UI and per-run logs.
 
-> Tested/targeted for Debian-based systems (including Kali).  
-> Requires `zsh` and `sudo`.
+- Targeted for **Debian-based** systems (including **Kali rolling**)
+- Requires: `zsh`, `sudo`
 
 ---
 
 ## Features
 
-- **Interactive menu** to select tasks (numbers or `all`)
-- **Log file per run** stored under `~/.sysmaint/logs/`
-  - Log filename includes CLI flags (e.g. `--dry-run__quiet`)
+- **Interactive task menu**
+  - Choose tasks by number (e.g. `1 2 4`) or type `all`
+- **Per-run logging** to `~/.sysmaint/logs/`
+  - Log filename includes CLI flags (example: `--dry-run__quiet`)
   - Automatic log cleanup (keeps last **14 days**)
-- **Progress UI**
-  - Spinner for operations without a simple progress signal (e.g. `apt-get update`)
-  - Upgrade progress bar driven by dpkg stage parsing (`Preparing to unpack`, `Unpacking`, `Setting up`)
+- **Clean terminal UI**
+  - `apt-get update` shown as compact status (no repo spam)
+  - Upgrade progress bar driven by dpkg stage parsing
+- **Upgradable packages table (after update)**
+  - Shows **Security / Regular / Total** counts
+  - Prints a **5-column** table of package names
+    - Security packages highlighted **red**
+    - Regular packages highlighted **cyan**
+  - If none: prints **“No upgradable packages found.”**
 - **Snapshot support (manual menu option)**
-  - Prefers **Timeshift** if available
+  - Prefers **Timeshift** if installed
   - Falls back to **Btrfs snapshot** (if `/` is btrfs and `btrfs` tool is present)
 - **Smart upgrade skip**
-  - If no packages are available to upgrade, the tool **skips upgrade** (no header/progress noise)
+  - If no packages are upgradable, `apt upgrade` is skipped
 - **Network awareness**
   - Basic connectivity check; warns when offline
 
@@ -34,62 +41,103 @@ A small interactive **Zsh** wrapper to run common system maintenance tasks (APT 
 - `coreutils` (for `stdbuf`, `df`, etc.)
 - `awk`, `sed`, `grep`, `tr`
 
-### Package managers (optional but used by tasks)
-- `apt-get` (Debian/Kali)
-- `flatpak` (only needed if you want the Flatpak task)
-- `snap` (only needed if you want the Snap task)
-
-### Snapshot tools (optional)
-- **Timeshift** (`timeshift`) for snapshot creation (preferred)
-- **Btrfs** (`btrfs`) + root filesystem on btrfs for btrfs snapshot fallback
+### Optional (tasks appear only if installed)
+- `flatpak`
+- `snapd` (provides `snap`)
+- `timeshift` (snapshot creation)
+- `btrfs-progs` + btrfs root filesystem (btrfs snapshot fallback)
 
 ---
 
 ## Install
 
-1. Save the script as `sysmaint_V2.2.2.sh` (or any name you prefer):
-   ```sh
-   chmod +x sysmaint_V2.2.2.sh
-   ```
+### 1) Get the script
 
-2. Run it:
-   ```sh
-   ./sysmaint_V2.2.2.sh
-   ```
+Clone and run from the repo, or download the script and make it executable:
+
+```sh
+chmod +x sysmaint.sh
+```
+
+### 2) Run
+
+```sh
+./sysmaint.sh
+```
 
 ---
+
+## Alias (optional)
+
+If you don’t want to move the script into a PATH directory, you can add an alias so you can run it as `sysmaint` from anywhere.
+
+### Zsh (`~/.zshrc`)
+```sh
+# If sysmaint.sh is in your home directory:
+alias sysmaint="$HOME/sysmaint.sh"
+
+# Or if it’s inside your repo folder:
+# alias sysmaint="$HOME/path/to/sysmaint/sysmaint.sh"
+```
+
+Reload Zsh:
+```sh
+source ~/.zshrc
+```
+
+Test:
+```sh
+sysmaint
+sysmaint --dry-run
+```
+
+### Bash (`~/.bashrc`)
+```sh
+alias sysmaint="$HOME/sysmaint.sh"
+```
+
+Reload Bash:
+```sh
+source ~/.bashrc
+```
+
+### Function wrapper (recommended alternative)
+
+A function wrapper behaves better than an alias for passing flags/arguments:
+
+```sh
+sysmaint() { "$HOME/sysmaint.sh" "$@"; }
+```
 
 ## Usage
 
 ### Interactive menu (recommended)
+
 ```sh
-./sysmaint_V2.2.2.sh
+./sysmaint.sh
 ```
 
-Choose tasks by number (e.g. `1 2 4`) or type `all`, then confirm.
+Select tasks by number (e.g. `1 2 4`) or type `all`, then confirm.
 
 ### Common flags
 
 - `--dry-run`  
-  Print the commands that would run without making changes.
+  Print commands without making changes.
   ```sh
-  ./sysmaint_V2.2.2.sh --dry-run
+  ./sysmaint.sh --dry-run
   ```
 
 - `--quiet`  
   Reduce terminal output (still writes logs).
   ```sh
-  ./sysmaint_V2.2.2.sh --quiet
+  ./sysmaint.sh --quiet
   ```
 
 - `--no-snapshot`  
   Disables snapshot creation even if you select the `snapshot` task.
   ```sh
-  ./sysmaint_V2.2.2.sh --no-snapshot
+  ./sysmaint.sh --no-snapshot
   ```
-
-> Note: This tool does **not** automatically create snapshots before upgrades in this revision.  
-> Snapshots happen only if you select the `snapshot` task from the menu (unless disabled with `--no-snapshot`).
 
 ---
 
@@ -106,168 +154,92 @@ Typical menu entries:
 - `snap refresh` — update Snap packages (only if Snap is installed)
 - `snapshot` — create system snapshot (Timeshift/Btrfs)
 
+> Note: The **Snap** option only appears if `snap` is installed and on PATH (usually by installing `snapd`).
+
 ---
 
 ## Logs
 
-- Logs are stored in:
-  - `~/.sysmaint/logs/`
+- Location: `~/.sysmaint/logs/`
 
-Example log filename:
+Example filenames:
 - `sysmaint-20260403_211004--noflags.log`
 - `sysmaint-20260403_211004--dry-run__quiet.log`
+
+---
+
+## Setup (rename + put on PATH)
+
+Recommended: move to `~/.local/bin` so you can run `sysmaint` directly:
+
+```sh
+mkdir -p ~/.local/bin
+cp sysmaint.sh ~/.local/bin/sysmaint
+chmod +x ~/.local/bin/sysmaint
+```
+
+Ensure `~/.local/bin` is in PATH (Zsh):
+
+```sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Now run:
+
+```sh
+sysmaint
+```
+
+---
+
+## Troubleshooting
+
+### Snap option is missing
+
+The menu hides Snap if the `snap` command is not installed:
+
+```sh
+command -v snap || echo "snap not installed"
+```
+
+Install (Debian/Kali):
+
+```sh
+sudo apt-get update
+sudo apt-get install -y snapd
+```
+
+### APT lock errors
+
+If you see:
+
+- `Could not get lock /var/lib/dpkg/lock-frontend`
+
+It means another `apt`/`dpkg` process is still running. Wait for it to finish, or stop it safely, then repair:
+
+```sh
+sudo dpkg --configure -a
+sudo apt-get -f install
+```
+
+### `dpkg verify` shows “missing” or “?M5??????”
+
+`dpkg --verify` reports files that differ from packaged checksums/permissions or are missing.
+
+Find the owning package and reinstall if needed:
+
+```sh
+dpkg -S /usr/share/wordlists/rockyou.txt.gz
+sudo apt-get install --reinstall wordlists
+```
 
 ---
 
 ## Safety notes / disclaimers
 
 - This tool runs real system package operations with `sudo`.
-- Snapshots are **best-effort** and **not guaranteed**:
+- Snapshots are best-effort and **not guaranteed**:
   - Timeshift snapshot IDs are extracted from command output (may vary by version)
   - Btrfs snapshot behavior depends on your system layout and permissions
-- The upgrade progress bar is based on parsing dpkg/apt output and may behave differently across distributions.
-
----
-
-## Troubleshooting
-
-### “command not found” errors (e.g. `parse_args`, `init_logging`)
-This usually happens when the script file got **appended** accidentally (two scripts glued together) or is truncated.
-
-Fix by rewriting the file using overwrite (not append), e.g.:
-
-```sh
-cat > sysmaint_V2.2.2.sh <<'EOF'
-# paste the full script here
-EOF
-chmod +x sysmaint_V2.2.2.sh
-```
-
-### No progress bar during upgrade
-The progress UI relies on dpkg stage lines. If your system’s output format differs, it may not detect packages.
-Check the log file and confirm lines like:
-- `Preparing to unpack ...`
-- `Unpacking ...`
-- `Setting up ...`
-
----
-# sysmaint — Setup (rename + alias)
-
-This guide shows how to rename your script from `sysmaint_V3.sh` to `sysmaint.sh` and add a shell alias so you can run it as `sysmaint`.
-
----
-
-## 1) Rename the file
-
-From the directory where the script is located:
-
-```sh
-mv sysmaint_V3.sh sysmaint.sh
-chmod +x sysmaint.sh
-```
-
-Confirm it runs:
-
-```sh
-./sysmaint.sh
-```
-
----
-
-## 2) (Recommended) Move it to a permanent location
-
-Example: `~/.local/bin` (works on most Linux systems and avoids “where is my script?” issues)
-
-```sh
-mkdir -p ~/.local/bin
-mv sysmaint.sh ~/.local/bin/sysmaint
-chmod +x ~/.local/bin/sysmaint
-```
-
-> This renames it to `sysmaint` (no `.sh`) which is the common Linux style.
-
----
-
-## 3) Ensure `~/.local/bin` is in your PATH
-
-Check:
-
-```sh
-echo "$PATH" | tr ':' '\n' | grep -x "$HOME/.local/bin" >/dev/null && echo "OK: in PATH" || echo "Not in PATH"
-```
-
-If it’s **not** in PATH, add this to your shell config:
-
-### For Zsh (`~/.zshrc`)
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-### For Bash (`~/.bashrc`)
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Then reload:
-
-```sh
-source ~/.zshrc   # or: source ~/.bashrc
-```
-
-Now you can run:
-
-```sh
-sysmaint
-```
-
----
-
-## 4) Add an alias (optional)
-
-If you did **not** move the file into your PATH and you want an alias instead:
-
-### Zsh (`~/.zshrc`)
-```sh
-alias sysmaint="$HOME/.local/bin/sysmaint"
-```
-
-Or if you kept it elsewhere, point to the full path:
-
-```sh
-alias sysmaint="$HOME/development/incomplete/sysmaint/sysmaint.sh"
-```
-
-Reload:
-
-```sh
-source ~/.zshrc
-```
-
-Test:
-
-```sh
-sysmaint
-```
-
----
-
-## 5) (Optional) Add autocompletion-friendly function wrapper (Zsh)
-
-If you want something more flexible than an alias (allows passing args cleanly):
-
-```sh
-sysmaint() { "$HOME/.local/bin/sysmaint" "$@"; }
-```
-
-Put that in `~/.zshrc`, reload, and use:
-
-```sh
-sysmaint --dry-run
-```
-
----
-
-## Quick recommendation
-
-- Best practice: move it to `~/.local/bin/sysmaint` and run `sysmaint` directly.
-- Only use an alias if you don’t want to modify PATH.
+- Upgrade progress is based on parsing dpkg/apt output; output formats can vary.
