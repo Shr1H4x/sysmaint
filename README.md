@@ -151,8 +151,123 @@ Check the log file and confirm lines like:
 - `Setting up ...`
 
 ---
+# sysmaint — Setup (rename + alias)
 
-## License
+This guide shows how to rename your script from `sysmaint_V3.sh` to `sysmaint.sh` and add a shell alias so you can run it as `sysmaint`.
 
-Choose one:
-- MIT
+---
+
+## 1) Rename the file
+
+From the directory where the script is located:
+
+```sh
+mv sysmaint_V3.sh sysmaint.sh
+chmod +x sysmaint.sh
+```
+
+Confirm it runs:
+
+```sh
+./sysmaint.sh
+```
+
+---
+
+## 2) (Recommended) Move it to a permanent location
+
+Example: `~/.local/bin` (works on most Linux systems and avoids “where is my script?” issues)
+
+```sh
+mkdir -p ~/.local/bin
+mv sysmaint.sh ~/.local/bin/sysmaint
+chmod +x ~/.local/bin/sysmaint
+```
+
+> This renames it to `sysmaint` (no `.sh`) which is the common Linux style.
+
+---
+
+## 3) Ensure `~/.local/bin` is in your PATH
+
+Check:
+
+```sh
+echo "$PATH" | tr ':' '\n' | grep -x "$HOME/.local/bin" >/dev/null && echo "OK: in PATH" || echo "Not in PATH"
+```
+
+If it’s **not** in PATH, add this to your shell config:
+
+### For Zsh (`~/.zshrc`)
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### For Bash (`~/.bashrc`)
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Then reload:
+
+```sh
+source ~/.zshrc   # or: source ~/.bashrc
+```
+
+Now you can run:
+
+```sh
+sysmaint
+```
+
+---
+
+## 4) Add an alias (optional)
+
+If you did **not** move the file into your PATH and you want an alias instead:
+
+### Zsh (`~/.zshrc`)
+```sh
+alias sysmaint="$HOME/.local/bin/sysmaint"
+```
+
+Or if you kept it elsewhere, point to the full path:
+
+```sh
+alias sysmaint="$HOME/development/incomplete/sysmaint/sysmaint.sh"
+```
+
+Reload:
+
+```sh
+source ~/.zshrc
+```
+
+Test:
+
+```sh
+sysmaint
+```
+
+---
+
+## 5) (Optional) Add autocompletion-friendly function wrapper (Zsh)
+
+If you want something more flexible than an alias (allows passing args cleanly):
+
+```sh
+sysmaint() { "$HOME/.local/bin/sysmaint" "$@"; }
+```
+
+Put that in `~/.zshrc`, reload, and use:
+
+```sh
+sysmaint --dry-run
+```
+
+---
+
+## Quick recommendation
+
+- Best practice: move it to `~/.local/bin/sysmaint` and run `sysmaint` directly.
+- Only use an alias if you don’t want to modify PATH.
