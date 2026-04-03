@@ -1,177 +1,158 @@
-# sysmaint
+# sysmaint (Zsh) — System Maintenance Wrapper
 
-> A smart, interactive system maintenance function for Debian/Ubuntu-based systems — built for Kali Linux with zsh support.
+A small interactive **Zsh** wrapper to run common system maintenance tasks (APT / Flatpak / Snap) with **logging**, **progress UI**, a **snapshot menu option**, and a **smart skip** for upgrades when nothing is available.
+
+> Tested/targeted for Debian-based systems (including Kali).  
+> Requires `zsh` and `sudo`.
 
 ---
 
 ## Features
 
-- **Interactive task menu** — pick exactly what you want to run, no more, no less
-- **Upgrade preview** — shows a formatted table of packages before upgrading
-- **Package integrity check** — runs `dpkg --verify` and parses results cleanly
-- **Flatpak & Snap support** — auto-detected, only shown if installed
-- **Lock file** — prevents overlapping runs with stale PID detection
-- **Sudo check** — fails early and cleanly if access is denied
-- **Log rotation** — per-run timestamped logs, auto-deletes after 14 days
-- **Log levels** — every line tagged `INFO` / `WARN` / `ERROR` / `SKIP` / `CMD`
-- **System snapshot** — disk space and package count before and after
-- **Run summary** — shows what ran, what was skipped, what failed, time taken
-- **Spinner** — progress indicator on long-running commands
-- **Desktop notification** — `notify-send` on completion or failure
-- **Colour output** — green pass, red fail, yellow warn, blue skip
-- **`--quiet` mode** — suppresses everything except errors
-- **`--dry-run` mode** — shows what would run without executing anything
+- **Interactive menu** to select tasks (numbers or `all`)
+- **Log file per run** stored under `~/.sysmaint/logs/`
+  - Log filename includes CLI flags (e.g. `--dry-run__quiet`)
+  - Automatic log cleanup (keeps last **14 days**)
+- **Progress UI**
+  - Spinner for operations without a simple progress signal (e.g. `apt-get update`)
+  - Upgrade progress bar driven by dpkg stage parsing (`Preparing to unpack`, `Unpacking`, `Setting up`)
+- **Snapshot support (manual menu option)**
+  - Prefers **Timeshift** if available
+  - Falls back to **Btrfs snapshot** (if `/` is btrfs and `btrfs` tool is present)
+- **Smart upgrade skip**
+  - If no packages are available to upgrade, the tool **skips upgrade** (no header/progress noise)
+- **Network awareness**
+  - Basic connectivity check; warns when offline
 
 ---
 
 ## Requirements
 
-- zsh or bash
-- Debian/Ubuntu-based system (`apt`, `dpkg`)
-- `sudo` access
-- Optional: `flatpak`, `snap`, `notify-send`
+### Required
+- `zsh`
+- `sudo`
+- `coreutils` (for `stdbuf`, `df`, etc.)
+- `awk`, `sed`, `grep`, `tr`
+
+### Package managers (optional but used by tasks)
+- `apt-get` (Debian/Kali)
+- `flatpak` (only needed if you want the Flatpak task)
+- `snap` (only needed if you want the Snap task)
+
+### Snapshot tools (optional)
+- **Timeshift** (`timeshift`) for snapshot creation (preferred)
+- **Btrfs** (`btrfs`) + root filesystem on btrfs for btrfs snapshot fallback
 
 ---
 
-## Installation
+## Install
 
-**1. Clone or download**
+1. Save the script as `sysmaint_V2.2.2.sh` (or any name you prefer):
+   ```sh
+   chmod +x sysmaint_V2.2.2.sh
+   ```
 
-```bash
-git clone https://github.com/ShriHax-21/sysmaint.git
-```
-
-**2. Add to your shell config**
-
-```bash
-echo 'source ~/sysmaint/sysmaint.zsh' >> ~/.zshrc
-source ~/.zshrc
-```
-
-Or paste the function directly into your `~/.zshrc` / `~/.bashrc`.
+2. Run it:
+   ```sh
+   ./sysmaint_V2.2.2.sh
+   ```
 
 ---
 
 ## Usage
 
-```bash
-sysmaint                  # Interactive menu — pick tasks by number
-sysmaint --auto           # Ask y/n per task, then run selected automatically
-sysmaint --dry-run        # Show what would run without executing
-sysmaint --full           # Include apt full-upgrade in task list
-sysmaint --quiet          # Suppress all output except errors
-sysmaint --auto --full    # Full upgrade, auto-confirm all
-sysmaint --dry-run --full # Preview full upgrade run
-sysmaint --help           # Show usage
+### Interactive menu (recommended)
+```sh
+./sysmaint_V2.2.2.sh
 ```
+
+Choose tasks by number (e.g. `1 2 4`) or type `all`, then confirm.
+
+### Common flags
+
+- `--dry-run`  
+  Print the commands that would run without making changes.
+  ```sh
+  ./sysmaint_V2.2.2.sh --dry-run
+  ```
+
+- `--quiet`  
+  Reduce terminal output (still writes logs).
+  ```sh
+  ./sysmaint_V2.2.2.sh --quiet
+  ```
+
+- `--no-snapshot`  
+  Disables snapshot creation even if you select the `snapshot` task.
+  ```sh
+  ./sysmaint_V2.2.2.sh --no-snapshot
+  ```
+
+> Note: This tool does **not** automatically create snapshots before upgrades in this revision.  
+> Snapshots happen only if you select the `snapshot` task from the menu (unless disabled with `--no-snapshot`).
 
 ---
 
-## Task Menu
+## Tasks (menu options)
 
-When run interactively, you get a numbered menu:
+Typical menu entries:
 
-```
-╔══════════════════════════════════════╗
-║    sysmaint — System Maintenance     ║
-╚══════════════════════════════════════╝
-
-  Select tasks to run (e.g. 1 2 3 or 'all'):
-
-  [1]  apt update       — refresh package index
-  [2]  apt upgrade      — upgrade all packages
-  [3]  apt autoremove   — remove unused dependencies
-  [4]  apt clean        — clear downloaded package cache
-  [5]  dpkg verify      — check installed package integrity
-  [6]  flatpak update   — update Flatpak packages  (if installed)
-  [7]  snap refresh     — update Snap packages      (if installed)
-
-  ▶  Enter numbers (space separated) or 'all':
-```
-
----
-
-## Upgrade Preview
-
-After `apt update`, sysmaint shows a formatted table of upgradable packages before running upgrade:
-
-```
-[01:23:45] [INFO] 12 package(s) available to upgrade:
-
-  Package                             Version
-  ─────────────────────────────────────────────
-  curl                                8.5.0-2
-  libssl3                             3.1.4-2
-  ...
-```
-
----
-
-## Run Summary
-
-Every run ends with a full summary:
-
-```
-╔══════════════════════════════════════╗
-║             Run Summary              ║
-╚══════════════════════════════════════╝
-
-  ✔  Ran      : apt update apt upgrade apt autoremove apt clean
-  ⊘  Skipped  : dpkg verify
-  ✘  Failed   : none
-
-  Disk free   : 8.9G → 9.2G
-  Packages    : 1927 → 1931
-  Time taken  : 47s
-  Log saved   : /home/user/.sysmaint/logs/sysmaint-20260318_012320.log
-```
+- `apt update` — refresh package index
+- `apt upgrade` — upgrade all packages (**auto-skips if nothing to do**)
+- `apt autoremove` — remove unused dependencies
+- `apt clean` — clear downloaded package cache
+- `dpkg verify` — verify installed package integrity
+- `flatpak update` — update Flatpak packages (only if Flatpak is installed)
+- `snap refresh` — update Snap packages (only if Snap is installed)
+- `snapshot` — create system snapshot (Timeshift/Btrfs)
 
 ---
 
 ## Logs
 
-Logs are stored at:
+- Logs are stored in:
+  - `~/.sysmaint/logs/`
 
-```
-~/.sysmaint/logs/sysmaint-YYYYMMDD_HHMMSS.log
-```
-
-Logs older than **14 days** are automatically deleted on each run. To change retention:
-
-```bash
-# Inside the function, edit this line
-local LOG_RETENTION_DAYS=14
-```
+Example log filename:
+- `sysmaint-20260403_211004--noflags.log`
+- `sysmaint-20260403_211004--dry-run__quiet.log`
 
 ---
 
-## Flags Reference
+## Safety notes / disclaimers
 
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Preview all commands without executing |
-| `--auto` | Prompt y/n per task instead of menu |
-| `--full` | Add `apt full-upgrade` to task list |
-| `--quiet` | Suppress all output except errors |
-| `--help` | Show usage |
+- This tool runs real system package operations with `sudo`.
+- Snapshots are **best-effort** and **not guaranteed**:
+  - Timeshift snapshot IDs are extracted from command output (may vary by version)
+  - Btrfs snapshot behavior depends on your system layout and permissions
+- The upgrade progress bar is based on parsing dpkg/apt output and may behave differently across distributions.
 
 ---
 
-## Known Behaviour
+## Troubleshooting
 
-- Flatpak and Snap tasks only appear in the menu if the tools are installed
-- `dpkg --verify` output is saved to log only — terminal shows a clean pass/fail summary
-- Lock file at `/tmp/sysmaint.lock` is auto-removed on exit; stale PIDs are detected and cleared
-- Non-interactive shells (e.g. cron) skip prompts and log a `[SKIP]` entry
+### “command not found” errors (e.g. `parse_args`, `init_logging`)
+This usually happens when the script file got **appended** accidentally (two scripts glued together) or is truncated.
 
----
+Fix by rewriting the file using overwrite (not append), e.g.:
 
-## Author
+```sh
+cat > sysmaint_V2.2.2.sh <<'EOF'
+# paste the full script here
+EOF
+chmod +x sysmaint_V2.2.2.sh
+```
 
-**ShriHax** — [shrijesh.com.np](https://shrijesh.com.np) · [GitHub: ShriHax-21](https://github.com/ShriHax-21)
+### No progress bar during upgrade
+The progress UI relies on dpkg stage lines. If your system’s output format differs, it may not detect packages.
+Check the log file and confirm lines like:
+- `Preparing to unpack ...`
+- `Unpacking ...`
+- `Setting up ...`
 
 ---
 
 ## License
 
-MIT License — do whatever you want, just don't remove the attribution.
+Choose one:
+- MIT
