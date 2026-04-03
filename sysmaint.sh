@@ -2,11 +2,19 @@
 #=============================================================================
 # sysmaint — System Maintenance Tool (Zsh)
 #
-# Includes:
-# - Logging + log retention + flag-aware logfile name
-# - Interactive task menu + snapshot task
-# - Upgrade progress bar (package name)
-# - Skip upgrade completely when no packages are upgradable (no header/no bar)
+# Based on: Shr1H4x/sysmaint sysmaint-v3.sh (commit cb69ced...)
+#
+# Added/changed for testing (per your requirements):
+# - apt update uses apt-get and shows clean terminal output (no Hit/Get spam),
+#   while full output is still logged.
+# - After update: show upgradable packages in 5 columns (single table):
+#     - security packages RED
+#     - regular packages CYAN
+#   plus counts (Security/Regular/Total).
+#   If none: "No upgradable packages found."
+# - apt upgrade: progress bar + package name + single status (Preparing/Unpacking/Setting up)
+#   while full output is still logged.
+# - Snap menu item exists but is hidden if `snap` command not found.
 #=============================================================================
 
 setopt LOCAL_OPTIONS NO_MONITOR NO_NOTIFY 2>/dev/null
@@ -42,6 +50,11 @@ typeset -gA TASK_TIME_START TASK_TIME_END TASK_STATUS
 typeset -ga ORIG_ARGV
 ORIG_ARGV=()
 
+# package intelligence (new)
+typeset -ga UPGRADABLE_PKGS SECURITY_PKGS
+UPGRADABLE_PKGS=() SECURITY_PKGS=()
+typeset -g UPGRADABLE_TOTAL=0 UPGRADABLE_SECURITY=0 UPGRADABLE_REGULAR=0
+
 # ----------------------------
 # COLOURS
 # ----------------------------
@@ -76,12 +89,9 @@ _state_init_dir() {
 
 init_logging() {
   _state_init_dir
-
   local suffix
   suffix=$(_log_flag_suffix_from_argv "${ORIG_ARGV[@]}")
-
-  LOG_FILE="$LOG_DIR/sysmaint-$(date +%Y%m%d_%H%M%S)--${suffix}.log"
-
+  LOG_FILE="$LOG_DIR/sysmaint-$(date +%Y:%m:%d_%H:%M:%S)--${suffix}.log"
   find "$LOG_DIR" -name "sysmaint-*.log" -mtime +"$LOG_RETENTION_DAYS" -delete 2>/dev/null
 }
 
@@ -283,9 +293,143 @@ snapshot_maybe_create() {
 }
 
 #=============================================================================
-# APT REAL-TIME PROGRESS
+# NEW: apt update clean terminal (no Hit/Get spam), but full output in log
 #=============================================================================
-run_apt_progress_pkgname_only() {
+run_aptget_update_clean() {
+  if $DRY_RUN; then
+    _log CMD "[DRY-RUN] sudo apt-get update"
+    return 0
+  fi
+
+  _log CMD "sudo apt-get update"
+
+  if $QUIET; then
+    sudo apt-get update >>"$LOG_FILE" 2>&1
+    return $?
+  fi
+
+  local exit_file awk_script
+  exit_file=$(mktemp /tmp/sysmaint_update_exit.XXXX)
+  awk_script=$(mktemp /tmp/sysmaint_update_awk.XXXX)
+
+  cat >"$awk_script" <<'AWKEOF'
+/^(Get|Hit|Ign|Err):[0-9]+[[:space:]]+/ {
+  url=$2
+  gsub(/^[a-z]+:\/\//,"",url)
+  split(url,a,"/")
+  host=a[1]
+  print "REPO:" host
+  next
+}
+/^Reading package lists/ { print "STAGE:Reading package lists"; next }
+/^Building dependency tree/ { print "STAGE:Building dependency tree"; next }
+/^Reading state information/ { print "STAGE:Reading state information"; next }
+{ next }
+AWKEOF
+
+  local last_host="" stage="Updating package lists"
+  local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local i=0
+
+  (
+    stdbuf -oL -eL sudo apt-get update 2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE" | stdbuf -oL -eL awk -f "$awk_script"
+    print -r -- "${pipestatus[1]:-0}" > "$exit_file"
+  ) | while IFS= read -r tok; do
+        case "$tok" in
+          REPO:*)  last_host="${tok#REPO:}" ;;
+          STAGE:*) stage="${tok#STAGE:}" ;;
+        esac
+        printf "\r  ${C}%s${NC}  %s — %s..." "${spin[$((i % 10))]}" "$stage" "${last_host:-}" 2>/dev/null
+        (( i++ ))
+      done
+
+  printf "\r%-120s\r" " "
+  rm -f "$awk_script"
+
+  local rc=0
+  [[ -f "$exit_file" ]] && rc=$(<"$exit_file")
+  rm -f "$exit_file"
+  return "$rc"
+}
+
+#=============================================================================
+# NEW: Package intelligence + one 5-column table of ALL upgradable pkgs
+#=============================================================================
+build_pkg_intelligence() {
+  UPGRADABLE_PKGS=() SECURITY_PKGS=()
+  UPGRADABLE_TOTAL=0 UPGRADABLE_SECURITY=0 UPGRADABLE_REGULAR=0
+
+  local -a pkgs
+  pkgs=("${(@f)$(apt-get -s upgrade 2>/dev/null | awk '/^Inst /{print $2}')}")
+  (( ${#pkgs[@]} == 0 )) && return 0
+
+  UPGRADABLE_PKGS=("${pkgs[@]}")
+
+  local p pol
+  for p in "${pkgs[@]}"; do
+    pol=$(apt-cache policy "$p" 2>/dev/null)
+    if print -r -- "$pol" | grep -qiE 'security|kali-security|debian-security'; then
+      SECURITY_PKGS+=("$p")
+    fi
+  done
+
+  UPGRADABLE_TOTAL=${#UPGRADABLE_PKGS[@]}
+  UPGRADABLE_SECURITY=${#SECURITY_PKGS[@]}
+  UPGRADABLE_REGULAR=$(( UPGRADABLE_TOTAL - UPGRADABLE_SECURITY ))
+  (( UPGRADABLE_REGULAR < 0 )) && UPGRADABLE_REGULAR=0
+}
+
+_is_security_pkg() {
+  local p="$1"
+  [[ " ${SECURITY_PKGS[*]} " == *" $p "* ]]
+}
+
+show_upgradable_table_5col() {
+  build_pkg_intelligence
+
+  # Counts at top
+  _log INFO "Updates available: ${R}Security=${UPGRADABLE_SECURITY}${NC}  ${C}Regular=${UPGRADABLE_REGULAR}${NC}  Total=${UPGRADABLE_TOTAL}"
+
+  if (( UPGRADABLE_TOTAL == 0 )); then
+    print -r -- "" | tee -a "$LOG_FILE" >/dev/null
+    print -r -- "${G}No upgradable packages found.${NC}" | tee -a "$LOG_FILE" >/dev/null
+    print -r -- "" | tee -a "$LOG_FILE" >/dev/null
+    return 0
+  fi
+
+  local col_width=28 cols=5
+  local total_width=$((col_width * cols))
+
+  print -r -- "" | tee -a "$LOG_FILE" >/dev/null
+  print -r -- "${W}Upgradable packages (5 columns):${NC}" | tee -a "$LOG_FILE" >/dev/null
+
+  printf "  ${W}%-${col_width}s%-${col_width}s%-${col_width}s%-${col_width}s%-${col_width}s${NC}\n" \
+    "Package" "Package" "Package" "Package" "Package" | tee -a "$LOG_FILE" >/dev/null
+  printf "  ${W}%s${NC}\n" "$(printf '─%.0s' $(seq 1 $total_width))" | tee -a "$LOG_FILE" >/dev/null
+
+  local i idx line p
+  local total_pkgs=${#UPGRADABLE_PKGS[@]}
+
+  for (( i=1; i<=total_pkgs; i+=cols )); do
+    line="  "
+    for (( idx=i; idx<i+cols && idx<=total_pkgs; idx++ )); do
+      p="${UPGRADABLE_PKGS[$idx]}"
+      if _is_security_pkg "$p"; then
+        line+=$(printf "${R}%-${col_width}s${NC}" "$p")
+      else
+        line+=$(printf "${C}%-${col_width}s${NC}" "$p")
+      fi
+    done
+    printf "%b\n" "$line" | tee -a "$LOG_FILE" >/dev/null
+  done
+
+  print -r -- "" | tee -a "$LOG_FILE" >/dev/null
+}
+
+#=============================================================================
+# NEW: Upgrade progress bar + package name + single status word
+#=============================================================================
+run_apt_progress_with_status() {
   local -a cmd=("$@")
 
   if $DRY_RUN; then
@@ -299,26 +443,31 @@ run_apt_progress_pkgname_only() {
     return $?
   fi
 
-  local total
-  total=$(apt list --upgradable 2>/dev/null | grep -vc '^Listing')
+  build_pkg_intelligence
+  local total=$UPGRADABLE_TOTAL
   [[ $total -lt 1 ]] && total=1
 
-  local current=0 pkg=""
+  local current=0 pkg="(starting)" status="Running"
   local awk_script exit_file
-  awk_script=$(mktemp /tmp/sysmaint_apt_awk.XXXX)
-  exit_file=$(mktemp /tmp/sysmaint_apt_exit.XXXX)
+  awk_script=$(mktemp /tmp/sysmaint_upgrade_awk.XXXX)
+  exit_file=$(mktemp /tmp/sysmaint_upgrade_exit.XXXX)
 
   cat > "$awk_script" << 'AWKEOF'
 /^Preparing to unpack/ {
   n=split($NF,a,"/")
   file=a[n]
   split(file,b,"_")
-  if (b[1]!="") print "PKG:" b[1]
+  if (b[1]!="") print "PREP:" b[1]
   next
 }
-/^(Unpacking|Setting up) / {
+/^Unpacking / {
   split($2, p, ":")
-  if (p[1]!="") print "PKG:" p[1]
+  if (p[1]!="") print "UNP:" p[1]
+  next
+}
+/^Setting up / {
+  split($3, p, ":")
+  if (p[1]!="") print "SET:" p[1]
   next
 }
 AWKEOF
@@ -328,17 +477,19 @@ AWKEOF
       stdbuf -oL -eL tee -a "$LOG_FILE" | \
       stdbuf -oL -eL awk -f "$awk_script"
     print -r -- "${pipestatus[1]:-0}" > "$exit_file"
-  ) | while IFS= read -r parsed; do
-    case "$parsed" in
-      PKG:*)
-        pkg="${parsed#PKG:}"
-        (( current++ ))
-        _bar "$current" "$total" "$pkg"
-        ;;
+  ) | while IFS= read -r token; do
+    case "$token" in
+      PREP:*) pkg="${token#PREP:}"; status="Preparing" ;;
+      UNP:*)  pkg="${token#UNP:}";  status="Unpacking" ;;
+      SET:*)  pkg="${token#SET:}";  status="Setting up" ;;
     esac
+    (( current++ ))
+    (( current > total )) && current=$total
+    _bar "$current" "$total" "$pkg"
+    printf "  ${W}%s${NC}\n" "$status" 2>/dev/null
   done
 
-  printf "\r%-80s\r" " "
+  printf "\r%-120s\r" " "
   rm -f "$awk_script"
 
   local exit_code=0
@@ -350,6 +501,8 @@ AWKEOF
 #=============================================================================
 # HELPERS
 #=============================================================================
+_has_task() { [[ " ${SELECTED_TASKS[*]} " == *" $1 "* ]] }
+
 _has_upgrades() {
   local count
   count=$(apt-get -s upgrade 2>/dev/null | awk '/^Inst /{c++} END{print c+0}')
@@ -357,7 +510,7 @@ _has_upgrades() {
 }
 
 #=============================================================================
-# ARG PARSE  (FIXED: this function was missing)
+# ARG PARSE
 #=============================================================================
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -390,6 +543,7 @@ acquire_lock() {
   fi
   print -r -- $$ > "$LOCK_FILE"
   trap 'rm -f "/tmp/sysmaint.lock"' EXIT
+  trap 'rm -f "/tmp/sysmaint.lock"; print -r -- "\n'"${Y}"'Interrupted.'"${NC}"'\n"; return 1' INT TERM
 }
 
 sudo_check() {
@@ -400,7 +554,7 @@ sudo_check() {
 }
 
 #=============================================================================
-# TASK MENU (with snapshot)
+# TASK LIST / SELECTION (includes snap; hidden if snap isn't installed)
 #=============================================================================
 select_tasks() {
   local -a TASK_KEYS TASK_LABELS AVAILABLE_KEYS AVAILABLE_LABELS
@@ -431,6 +585,7 @@ select_tasks() {
   printf "${W}║    sysmaint — System Maintenance     ║${NC}\n"
   printf "${W}╚══════════════════════════════════════╝${NC}\n\n"
   printf "${C}  Select tasks to run (e.g. 1 2 3 or 'all'):${NC}\n\n"
+
   for (( i=1; i<=total; i++ )); do
     printf "  ${W}[%d]${NC}  %s\n" "$i" "${AVAILABLE_LABELS[$i]}"
   done
@@ -453,7 +608,10 @@ select_tasks() {
     done
   fi
 
-  (( ${#SELECTED_TASKS[@]} == 0 )) && return 1
+  if (( ${#SELECTED_TASKS[@]} == 0 )); then
+    print -r -- "\n${Y}  No tasks selected. Exiting.${NC}\n"
+    return 1
+  fi
 
   printf "\n${Y}  ▶  Confirm and run? (y/n): ${NC}"
   local confirm_ans=""
@@ -472,11 +630,22 @@ task_snapshot() {
 
 task_update() {
   _section "apt update"
-  run_with_spinner "apt-get update" sudo apt-get update && RAN+=("apt update") || FAILED+=("apt update")
+  _log INFO "Updating package index (clean terminal; full log)..."
+  run_aptget_update_clean
+  local rc=$?
+  if (( rc == 0 )); then
+    RAN+=("apt update")
+  else
+    FAILED+=("apt update")
+    return 1
+  fi
+
+  # After update: show the table or the "no upgradable packages found" message
+  show_upgradable_table_5col
+  return 0
 }
 
 task_upgrade() {
-  # hide everything if nothing to do
   if ! _has_upgrades; then
     _log INFO "No packages to upgrade — skipping."
     SKIPPED+=("apt upgrade (nothing to do)")
@@ -484,7 +653,46 @@ task_upgrade() {
   fi
 
   _section "apt upgrade"
-  run_apt_progress_pkgname_only sudo apt-get upgrade -y && RAN+=("apt upgrade") || FAILED+=("apt upgrade")
+  _log INFO "Upgrading (progress + package + status; full output in log)..."
+  run_apt_progress_with_status sudo apt-get upgrade -y
+  local rc=$?
+  (( rc == 0 )) && RAN+=("apt upgrade") || FAILED+=("apt upgrade")
+  return "$rc"
+}
+
+task_autoremove() {
+  _section "apt autoremove"
+  run_cmd sudo apt-get autoremove -y && RAN+=("apt autoremove") || FAILED+=("apt autoremove")
+}
+
+task_clean() {
+  _section "apt clean"
+  run_cmd sudo apt-get clean && RAN+=("apt clean") || FAILED+=("apt clean")
+}
+
+task_dpkg_verify() {
+  _section "dpkg verify"
+  run_cmd sudo dpkg --verify && RAN+=("dpkg verify") || FAILED+=("dpkg verify")
+}
+
+task_flatpak() {
+  _section "flatpak update"
+  if ! command -v flatpak &>/dev/null; then
+    _log SKIP "flatpak not installed — skipping"
+    SKIPPED+=("flatpak update")
+    return 0
+  fi
+  run_cmd flatpak update -y && RAN+=("flatpak update") || FAILED+=("flatpak update")
+}
+
+task_snap() {
+  _section "snap refresh"
+  if ! command -v snap &>/dev/null; then
+    _log SKIP "snap not installed — skipping"
+    SKIPPED+=("snap refresh")
+    return 0
+  fi
+  run_cmd sudo snap refresh && RAN+=("snap refresh") || FAILED+=("snap refresh")
 }
 
 #=============================================================================
@@ -513,9 +721,9 @@ EOF
 }
 
 summary() {
-  local DISK_AFTER=$(_disk_free_human)
-  local DISK_BYTES_AFTER=$(_disk_free_bytes)
-  local PKG_AFTER=$(dpkg -l 2>/dev/null | grep -c '^ii')
+  DISK_AFTER=$(_disk_free_human)
+  DISK_BYTES_AFTER=$(_disk_free_bytes)
+  PKG_AFTER=$(dpkg -l 2>/dev/null | grep -c '^ii')
   local END_TIME=$(date +%s)
   local ELAPSED=$((END_TIME - START_TIME))
   local freed=$(( DISK_BYTES_AFTER - DISK_BYTES_BEFORE ))
@@ -565,14 +773,14 @@ main() {
   local t
   for t in "${SELECTED_TASKS[@]}"; do
     case "$t" in
-      snapshot) task_snapshot ;;
-      update) task_update ;;
-      upgrade) task_upgrade ;;
-      autoremove) run_cmd sudo apt-get autoremove -y ;;
-      clean) run_cmd sudo apt-get clean ;;
-      dpkg-verify) run_cmd sudo dpkg --verify ;;
-      flatpak) run_cmd flatpak update -y ;;
-      snap) run_cmd sudo snap refresh ;;
+      snapshot)   task_snapshot ;;
+      update)     task_update ;;
+      upgrade)    task_upgrade ;;
+      autoremove) task_autoremove ;;
+      clean)      task_clean ;;
+      dpkg-verify) task_dpkg_verify ;;
+      flatpak)    task_flatpak ;;
+      snap)       task_snap ;;
     esac
   done
 
