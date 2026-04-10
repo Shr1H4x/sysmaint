@@ -573,19 +573,22 @@ run_apt_progress_with_status() {
   url=$0
   n=split(url,a,"/")
   file=a[n]
-  if (match(file,/([A-Za-z0-9+_.-]+)_([0-9].*)\.deb/,m)) {
-    split(m[1],b,"_")
-    print "DL:" b[1]
-  } else if (match(file,/([A-Za-z0-9+_.-]+)\.deb/,m)) {
-    print "DL:" m[1]
+  if (match(file,/_([0-9][^/]*)\.deb$/)) {
+    # Extract package name (everything before the first _)
+    pkg=file
+    sub(/_.*$/,"",pkg)
+    if (pkg!="") print "DL:" pkg
   }
   next
 }
 
 /^Downloading/ {
-  if (match($0,/([A-Za-z0-9+_.-]+)\.deb/,m)) {
-    split(m[1],b,"_")
-    print "DL:" b[1]
+  if (match($0,/[A-Za-z0-9+_.-]+\.deb/)) {
+    # Extract the matched package filename
+    pkg=substr($0,RSTART,RLENGTH)
+    sub(/_.*$/,"",pkg)
+    sub(/\.deb$/,"",pkg)
+    if (pkg!="") print "DL:" pkg
   }
   next
 }
@@ -627,9 +630,20 @@ AWKEOF
         (( current > total )) && current=$total
         ;;
     esac
-    _bar "$current" "$total" "$pkg"
-    printf "  ${W}%s${NC}\n" "$pkg_status"
+    # Skip displaying PREP and UNP (0% progress) - only show downloading and setting up
+    [[ "$pkg_status" == "Preparing" || "$pkg_status" == "Unpacking" ]] && continue
+    # For setting up, show progress bar and status on one line (overwrites previous line)
+    if [[ "$pkg_status" == "Setting up" ]]; then
+      printf "\r%-120s\r" " "
+      _bar "$current" "$total" "$pkg"
+      printf "  ${W}%s${NC}" "$pkg_status"
+    else
+      _bar "$current" "$total" "$pkg"
+      printf "  ${W}%s${NC}\n" "$pkg_status"
+    fi
   done
+  # Final newline after the loop completes
+  printf "\n"
 
   wait "$cmd_pid"
   local exit_code=$?
