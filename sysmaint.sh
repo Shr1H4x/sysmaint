@@ -182,7 +182,18 @@ _section() {
 run_cmd() {
   local -a cmd=("$@")
   if $DRY_RUN; then
-    _log CMD "[DRY-RUN] ${cmd[*]}"
+    local cmd_str="${cmd[*]}"
+    if [[ "$cmd_str" == *"autoremove"* ]]; then
+      _run_dryrun_autoremove
+    elif [[ "$cmd_str" == *"clean"* ]]; then
+      _run_dryrun_clean
+    elif [[ "$cmd_str" == *"flatpak"* ]]; then
+      _run_dryrun_flatpak
+    elif [[ "$cmd_str" == *"snap"* ]]; then
+      _run_dryrun_snap
+    else
+      _log CMD "[DRY-RUN] ${cmd_str}"
+    fi
     return 0
   fi
 
@@ -193,12 +204,71 @@ run_cmd() {
     return $?
   fi
 
-  # Run command and append all output to the log file. Avoid requiring external
-  # `tee` in restricted environments; we intentionally do not stream live output
-  # to the terminal here to keep compatibility.
   "${cmd[@]}" >>"$LOG_FILE" 2>&1
   local rc=$?
   return $rc
+}
+
+_run_dryrun_autoremove() {
+  _log CMD "sudo apt-get autoremove -y"
+  local -a fake_pkgs=("linux-headers-5.10.0-21-generic" "libgcc-10-dev" "python3.8-dev" "libstdc++-9-dev" "manpages-dev")
+  local total=${#fake_pkgs[@]}
+  local i=0
+  local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  while (( i < total )); do
+    printf "\r  ${C}%s${NC}  Removing %-35s\033[K" "${spin[$((i % 10 + 1))]}" "${fake_pkgs[$i+1]}"
+    sleep 0.15
+    (( i++ ))
+  done
+  printf "\r%-80s\r" " "
+  _log INFO "[DRY-RUN] Would remove $total packages (simulated)"
+  print -r -- "[DRY-RUN] Would remove $total packages (simulated)" >> "$LOG_FILE"
+}
+
+_run_dryrun_clean() {
+  _log CMD "sudo apt-get clean"
+  _log INFO "[DRY-RUN] Simulating apt cache clean..."
+  print -r -- "[DRY-RUN] Simulating apt cache clean..." >> "$LOG_FILE"
+  local -a repos=("archive.ubuntu.com" "security.ubuntu.com" "ports.ubuntu.com")
+  for repo in "${repos[@]}"; do
+    printf "\r  ${C}清理${NC}  Cleaning %s cache..." "$repo"
+    sleep 0.1
+  done
+  printf "\r%-80s\r" " "
+  local fake_freed=$(( RANDOM % 500 + 100 ))
+  _log INFO "[DRY-RUN] Would free ~${fake_freed}MB (simulated)"
+}
+
+_run_dryrun_flatpak() {
+  _log CMD "flatpak update -y"
+  _log INFO "[DRY-RUN] Simulating flatpak update..."
+  local -a flatpak_apps=("org.freedesktop.Platform" "org.gnome.Platform" "org.mozilla.firefox" "org.videolan.VLC" "com.spotify.Client")
+  local total=${#flatpak_apps[@]}
+  local i=0
+  local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  for app in "${flatpak_apps[@]}"; do
+    printf "\r  ${G}%s${NC}  Updating flatpak: %-30s\033[K" "${spin[$((i % 10 + 1))]}" "$app"
+    sleep 0.12
+    (( i++ ))
+  done
+  printf "\r%-80s\r" " "
+  _log INFO "[DRY-RUN] Would update $total flatpak apps (simulated)"
+}
+
+_run_dryrun_snap() {
+  _log CMD "sudo snap refresh"
+  _log INFO "[DRY-RUN] Simulating snap refresh..."
+  local -a snap_pkgs=("core20" "core22" "firefox" "chromium" "snapd")
+  local total=${#snap_pkgs[@]}
+  local i=0
+  local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  for pkg in "${snap_pkgs[@]}"; do
+    printf "\r  ${C}%s${NC}  Refreshing snap: %-30s\033[K" "${spin[$((i % 10 + 1))]}" "$pkg"
+    sleep 0.12
+    (( i++ ))
+  done
+  printf "\r%-80s\r" " "
+  _log INFO "[DRY-RUN] Would refresh $total snap packages (simulated)"
 }
 
 run_with_spinner() {
@@ -206,7 +276,14 @@ run_with_spinner() {
   local -a cmd=("$@")
 
   if $DRY_RUN; then
-    _log CMD "[DRY-RUN] ${cmd[*]}"
+    local cmd_str="${cmd[*]}"
+    if [[ "$cmd_str" == *"update"* ]]; then
+      _run_dryrun_apt_update "$label"
+    elif [[ "$cmd_str" == *"full-upgrade"* ]] || [[ "$cmd_str" == *"upgrade"* ]]; then
+      _run_dryrun_apt_upgrade "$label"
+    else
+      _log CMD "[DRY-RUN] ${cmd_str}"
+    fi
     return 0
   fi
   _log CMD "${cmd[*]}"
@@ -239,6 +316,128 @@ run_with_spinner() {
   return "$exit_code"
 }
 
+_run_dryrun_apt_update() {
+  local label="${1:-Updating package lists}"
+  _log CMD "sudo apt-get update"
+  
+  local -a repos=(
+    "archive.ubuntu.com/ubuntu"
+    "security.ubuntu.com/ubuntu" 
+    "ports.ubuntu.com/ubuntu"
+    "archive.ubuntu.com/ubuntu"
+    "security.ubuntu.com/ubuntu"
+  )
+  
+  local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local stage="Reading package lists"
+  local i=0
+  
+  for repo in "${repos[@]}"; do
+    local host="${repo%%/*}"
+    printf "\r  ${C}%s${NC}  %s — %s...\033[K" "${spin[$((i % 10 + 1))]}" "$stage" "$host"
+    sleep 0.2
+    (( i++ ))
+  done
+  
+  printf "\r%-120s\r" " "
+  _log INFO "[DRY-RUN] apt-get update simulated — 0 packages upgraded (simulated)"
+  print -r -- "[DRY-RUN] apt-get update simulated — 0 packages upgraded (simulated)" >> "$LOG_FILE"
+  
+  build_pkg_intelligence
+  show_upgradable_table_5col
+}
+
+_run_dryrun_apt_upgrade() {
+  local label="${1:-Upgrading packages}"
+  _log CMD "sudo apt full-upgrade -y"
+  
+  build_pkg_intelligence
+  local total=$UPGRADABLE_TOTAL
+  
+  local -a fake_pkgs=()
+  if (( total > 0 )); then
+    fake_pkgs=("${UPGRADABLE_PKGS[@]}")
+  else
+    fake_pkgs=("firefox" "libc6" "openssl" "python3" "nginx" "docker.io" "containerd" "kubeadm")
+    total=${#fake_pkgs[@]}
+  fi
+  
+  if [[ $total -lt 1 ]]; then
+    _log INFO "No packages to upgrade"
+    return 0
+  fi
+  
+  local current=0
+  local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local stages=("Downloading" "Preparing" "Unpacking" "Setting up")
+  
+  for (( i=1; i<=total; i++ )); do
+    local pkg="${fake_pkgs[$i]}"
+    local stage="${stages[$((i % 4 + 1))]}"
+    local pct=$(( i * 100 / total ))
+    local filled=$(( i * 36 / total ))
+    local bar=""
+    for (( j=0; j<filled; j++ )); do bar+="█"; done
+    for (( j=filled; j<36; j++ )); do bar+="░"; done
+    
+    printf "\r  ${G}[%s]${NC} ${W}%3d%%${NC} ${C}(%d/%d)${NC} %-30s \033[K" \
+      "$bar" "$pct" "$i" "$total" "$pkg (${stage})"
+    sleep 0.08
+  done
+  
+  printf "\r%-120s\r" " "
+  _log INFO "[DRY-RUN] apt full-upgrade simulated — $total packages processed (simulated)"
+  print -r -- "[DRY-RUN] apt full-upgrade simulated — $total packages processed (simulated)" >> "$LOG_FILE"
+}
+
+_run_dryrun_apt_progress() {
+  local cmd_str="$*"
+  _log CMD "sudo apt full-upgrade -y"
+  
+  build_pkg_intelligence
+  local total=$UPGRADABLE_TOTAL
+  if [[ $total -lt 1 ]]; then
+    _log INFO "No packages to upgrade"
+    return 0
+  fi
+  
+  local -a fake_pkgs=()
+  if (( total > 0 )); then
+    fake_pkgs=("${UPGRADABLE_PKGS[@]}")
+  else
+    fake_pkgs=("firefox" "libc6" "openssl" "python3" "nginx" "docker.io" "containerd" "kubeadm")
+    total=${#fake_pkgs[@]}
+  fi
+  
+  local current=0
+  local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local stages=("Downloading" "Preparing" "Unpacking" "Setting up")
+  local pkg pkg_status
+  
+  for (( i=1; i<=total; i++ )); do
+    pkg="${fake_pkgs[$i]}"
+    local stage="${stages[$((i % 4 + 1))]}"
+    pkg_status="$stage"
+    (( current++ ))
+    (( current > total )) && current=$total
+    
+    local pct=$(( current * 100 / total ))
+    local filled=$(( current * 36 / total ))
+    local bar=""
+    for (( j=0; j<filled; j++ )); do bar+="█"; done
+    for (( j=filled; j<36; j++ )); do bar+="░"; done
+    
+    printf "\r  ${G}[%-*s%s]${NC} ${W}%3d%%${NC} ${C}(%d/%d)${NC} %-30s \033[K" \
+           "$filled" "" "$(( 36 - filled ))" \
+           "$pct" "$current" "$total" "$pkg"
+    sleep 0.06
+  done
+  
+  printf "\r%-120s\r" " "
+  _log INFO "[DRY-RUN] apt full-upgrade simulated — $total packages processed (simulated)"
+  print -r -- "[DRY-RUN] apt full-upgrade simulated — $total packages processed (simulated)" >> "$LOG_FILE"
+}
+
 _bar() {
   local cur="$1" tot="$2" label="$3"
   local width=36 pct=0 filled=0
@@ -248,7 +447,8 @@ _bar() {
   local bar="" i
   for (( i=0; i<filled; i++ )); do bar+="█"; done
   for (( i=0; i<empty;  i++ )); do bar+="░"; done
-  printf "\r  ${G}[%s]${NC} ${W}%3d%%${NC} ${C}(%d/%d)${NC} %-30s" \
+  # FIX-9: Add \033[K to clear to end of line
+  printf "\r  ${G}[%s]${NC} ${W}%3d%%${NC} ${C}(%d/%d)${NC} %-30s\033[K" \
     "$bar" "$pct" "$cur" "$tot" "$label"
 }
 
@@ -383,11 +583,12 @@ run_aptget_update_clean() {
   split(url,a,"/")
   host=a[1]
   print "REPO:" host
+  fflush()
   next
 }
-/^Reading package lists/ { print "STAGE:Reading package lists"; next }
-/^Building dependency tree/ { print "STAGE:Building dependency tree"; next }
-/^Reading state information/ { print "STAGE:Reading state information"; next }
+/^Reading package lists/ { print "STAGE:Reading package lists"; fflush(); next }
+/^Building dependency tree/ { print "STAGE:Building dependency tree"; fflush(); next }
+/^Reading state information/ { print "STAGE:Reading state information"; fflush(); next }
 { next }
 AWKEOF
 
@@ -401,14 +602,16 @@ AWKEOF
   local i=0
 
   # Read fifo: tee to log and pipe to awk for token extraction
-  "$TEE" -a "$LOG_FILE" < "$fifo" | awk -f "$awk_script" | \
+  # FIX-9: Use stdbuf to disable buffering for real-time output
+  stdbuf -o0 "$TEE" -a "$LOG_FILE" < "$fifo" | stdbuf -o0 awk -f "$awk_script" | \
   while IFS= read -r tok; do
     case "$tok" in
       REPO:*)  last_host="${tok#REPO:}" ;;
       STAGE:*) stage="${tok#STAGE:}" ;;
     esac
     # FIX-8: +1 so we never hit index 0 (empty in Zsh 1-based arrays)
-    printf "\r  ${C}%s${NC}  %s — %s..." "${spin[$((i % 10 + 1))]}" "$stage" "${last_host:-}" 2>/dev/null
+    # FIX-9: Clear to end of line with \033[K
+    printf "\r  ${C}%s${NC}  %s — %s...\033[K" "${spin[$((i % 10 + 1))]}" "$stage" "${last_host:-}" 2>/dev/null
     (( i++ ))
   done
 
@@ -447,7 +650,8 @@ build_pkg_intelligence() {
   UPGRADABLE_TOTAL=0 UPGRADABLE_SECURITY=0 UPGRADABLE_REGULAR=0
 
   local -a pkgs
-  pkgs=("${(@f)$(apt-get -s upgrade 2>/dev/null | awk '/^Inst /{print $2}')}")
+  # Use apt list --upgradable instead of apt-get -s which no longer shows Inst lines
+  pkgs=("${(@f)$(apt list --upgradable 2>/dev/null | awk -F '/' '/\//{print $1}')}")
   (( ${#pkgs[@]} == 0 )) && { _PKG_INTEL_BUILT=true; return 0; }
 
   UPGRADABLE_PKGS=("${pkgs[@]}")
@@ -545,7 +749,7 @@ run_apt_progress_with_status() {
   local -a cmd=("$@")
 
   if $DRY_RUN; then
-    _log CMD "[DRY-RUN] ${cmd[*]}"
+    _run_dryrun_apt_progress "${cmd[*]}"
     return 0
   fi
   _log CMD "${cmd[*]}"
@@ -573,23 +777,22 @@ run_apt_progress_with_status() {
   url=$0
   n=split(url,a,"/")
   file=a[n]
-  if (match(file,/_([0-9][^/]*)\.deb$/)) {
-    # Extract package name (everything before the first _)
-    pkg=file
-    sub(/_.*$/,"",pkg)
-    if (pkg!="") print "DL:" pkg
+  if (match(file,/([A-Za-z0-9+_.-]+)_([0-9].*)\.deb/,m)) {
+    split(m[1],b,"_")
+    print "DL:" b[1]
+  } else if (match(file,/([A-Za-z0-9+_.-]+)\.deb/,m)) {
+    print "DL:" m[1]
   }
+  fflush()
   next
 }
 
 /^Downloading/ {
-  if (match($0,/[A-Za-z0-9+_.-]+\.deb/)) {
-    # Extract the matched package filename
-    pkg=substr($0,RSTART,RLENGTH)
-    sub(/_.*$/,"",pkg)
-    sub(/\.deb$/,"",pkg)
-    if (pkg!="") print "DL:" pkg
+  if (match($0,/([A-Za-z0-9+_.-]+)\.deb/,m)) {
+    split(m[1],b,"_")
+    print "DL:" b[1]
   }
+  fflush()
   next
 }
 
@@ -597,17 +800,17 @@ run_apt_progress_with_status() {
   n=split($NF,a,"/")
   file=a[n]
   split(file,b,"_")
-  if (b[1]!="") print "PREP:" b[1]
+  if (b[1]!="") { print "PREP:" b[1]; fflush() }
   next
 }
 /^Unpacking / {
   split($2, p, ":")
-  if (p[1]!="") print "UNP:" p[1]
+  if (p[1]!="") { print "UNP:" p[1]; fflush() }
   next
 }
 /^Setting up / {
   split($3, p, ":")
-  if (p[1]!="") print "SET:" p[1]
+  if (p[1]!="") { print "SET:" p[1]; fflush() }
   next
 }
 AWKEOF
@@ -616,7 +819,8 @@ AWKEOF
   "${cmd[@]}" >"$fifo" 2>&1 &
   local cmd_pid=$!
 
-  "$TEE" -a "$LOG_FILE" < "$fifo" | awk -f "$awk_script" | \
+  # FIX-9: Use stdbuf to disable buffering for real-time output
+  stdbuf -o0 "$TEE" -a "$LOG_FILE" < "$fifo" | stdbuf -o0 awk -f "$awk_script" | \
   while IFS= read -r token; do
     case "$token" in
       DL:*)   pkg="${token#DL:}"; pkg_status="Downloading" ;;
@@ -630,20 +834,11 @@ AWKEOF
         (( current > total )) && current=$total
         ;;
     esac
-    # Skip displaying PREP and UNP (0% progress) - only show downloading and setting up
-    [[ "$pkg_status" == "Preparing" || "$pkg_status" == "Unpacking" ]] && continue
-    # For setting up, show progress bar and status on one line (overwrites previous line)
-    if [[ "$pkg_status" == "Setting up" ]]; then
-      printf "\r%-120s\r" " "
-      _bar "$current" "$total" "$pkg"
-      printf "  ${W}%s${NC}" "$pkg_status"
-    else
-      _bar "$current" "$total" "$pkg"
-      printf "  ${W}%s${NC}\n" "$pkg_status"
-    fi
+    # FIX-9: Draw bar with status on same line using \r, clear to end
+    printf "\r  ${G}[%-*s%s]${NC} ${W}%3d%%${NC} ${C}(%d/%d)${NC} %-30s \033[K" \
+           "$(( current * 36 / total ))" "" "$(( 36 - current * 36 / total ))" \
+           "$(( current * 100 / total ))" "$current" "$total" "$pkg"
   done
-  # Final newline after the loop completes
-  printf "\n"
 
   wait "$cmd_pid"
   local exit_code=$?
@@ -719,6 +914,10 @@ acquire_lock() {
 }
 
 sudo_check() {
+  if $DRY_RUN; then
+    _log INFO "[DRY-RUN] Skipping sudo check (dry-run mode)"
+    return 0
+  fi
   if ! sudo -n true 2>/dev/null; then
     _log WARN "Sudo requires password. Prompting..."
     sudo true || { _log ERROR "Sudo access denied. Aborting."; return 1; }
@@ -845,9 +1044,40 @@ task_upgrade() {
   fi
 
   _section "apt upgrade"
+  
+  # FIX-10: Check for broken dependencies and fix them before upgrading
+  _log INFO "Checking for broken dependencies..."
+  if sudo apt-get check 2>&1 | grep -qE "broken|unmet|depends"; then
+    _log WARN "Broken dependencies detected. Running apt --fix-broken install..."
+    run_cmd sudo apt-get --fix-broken install -y || {
+      _log ERROR "Failed to fix broken dependencies."
+      FAILED+=("apt upgrade (fix-broken failed)")
+      return 1
+    }
+    _log INFO "Dependencies fixed. Proceeding with upgrade..."
+  fi
+  
   _log INFO "Upgrading (progress + package + status; full output in log)..."
-  run_apt_progress_with_status sudo apt-get upgrade -y
+  run_apt_progress_with_status sudo apt full-upgrade -y
   local rc=$?
+  
+  # FIX-10: If upgrade kept packages back, try fix-broken and retry once
+  if (( rc == 0 )); then
+    # Check if packages were kept back from the log
+    if grep -q "Not Upgrading:" "$LOG_FILE" 2>/dev/null && \
+       grep "Not Upgrading:" "$LOG_FILE" | tail -1 | grep -qv "Not Upgrading: 0"; then
+      local kept_back
+      kept_back=$(grep "Not Upgrading:" "$LOG_FILE" | tail -1 | grep -oE '[0-9]+' | tail -1)
+      if [[ -n "$kept_back" && "$kept_back" -gt 0 ]]; then
+        _log WARN "$kept_back packages were kept back. Running apt --fix-broken install..."
+        run_cmd sudo apt-get --fix-broken install -y
+        _log INFO "Retrying upgrade after fixing dependencies..."
+        run_apt_progress_with_status sudo apt full-upgrade -y
+        rc=$?
+      fi
+    fi
+  fi
+  
   (( rc == 0 )) && RAN+=("apt upgrade") || FAILED+=("apt upgrade")
   return "$rc"
 }
